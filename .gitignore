@@ -5,3 +5,6 @@ dist/
 .DS_Store
 .env.local
 .venv/
+__pycache__/
+*.pyc
+*.pyo

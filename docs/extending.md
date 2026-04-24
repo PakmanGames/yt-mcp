@@ -81,17 +81,41 @@ from server.tools.my_feature import my_analysis
 my-new-library>=1.0.0
 ```
 
-### Step 4 — Test manually
+### Step 4 — Write and run tests
+
+Add a test file `tests/test_my_feature.py` following the patterns in [docs/testing.md](testing.md). At minimum, cover:
+
+- `DownloadError` from `downloader.download()` → `{"error": "..."}` response
+- `FileNotFoundError` (FFmpeg not on PATH) → `{"error": "..."}` response
+- Analysis pipeline failure → `{"error": "..."}` response
+- Happy path → correct JSON structure returned
+
+```bash
+python -m pytest tests/test_my_feature.py -v
+```
+
+To run the full suite and confirm nothing is broken:
+
+```bash
+python -m pytest
+```
+
+For a live smoke test against a real video (no mocks), call your code directly:
 
 ```bash
 python -c "
 from server.utils.downloader import VideoDownloader
 from server.tools.my_feature import my_analysis
+
+# Short public video — fast to download and cache
+URL = 'https://www.youtube.com/watch?v=M1GYqy0tHV0'
 d = VideoDownloader()
-vp, ap, info = d.download('https://www.youtube.com/watch?v=jNQXAC9IVRw')
+vp, ap, info = d.download(URL)
 print(my_analysis(vp, 'default'))
 "
 ```
+
+See [**docs/testing.md**](testing.md) for the full testing guide, fixture reference, and mock patterns.
 
 ---
 

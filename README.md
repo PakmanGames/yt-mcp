@@ -16,6 +16,7 @@ A fully local MCP (Model Context Protocol) server that gives AI assistants deep,
 - [Supported URL Formats](#supported-url-formats)
 - [Environment Variables](#environment-variables)
 - [Development](#development)
+- [Testing](#testing)
 - [Architecture](#architecture)
 - [TypeScript Server (archived)](#typescript-server--archived)
 - [License](#license)
@@ -289,6 +290,75 @@ print(get_transcript(ap)['language'])
 
 ---
 
+## Testing
+
+The Python server has a full unit test suite — 164 tests across 6 modules. All tests run without any network access or model downloads; every external dependency (Whisper, librosa, FFmpeg, PySceneDetect, OpenCV, yt-dlp) is mocked.
+
+### Install test dependencies
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+### Run the full suite
+
+```bash
+python -m pytest
+```
+
+Expected output: `164 passed in ~4s`
+
+### Run tests for a specific module
+
+```bash
+python -m pytest tests/test_downloader.py   # VideoDownloader + VideoInfo
+python -m pytest tests/test_transcript.py   # Whisper wrapper + range helpers
+python -m pytest tests/test_frames.py       # FFmpeg, PySceneDetect, OpenCV
+python -m pytest tests/test_audio.py        # librosa AudioAnalyzer
+python -m pytest tests/test_timeline.py     # build_timeline + speech rate
+python -m pytest tests/test_main.py         # all 4 MCP tool handlers
+```
+
+### Run a single test by name
+
+```bash
+python -m pytest tests/test_timeline.py::TestBuildTimeline::test_rapid_cuts_below_min_merged -v
+```
+
+### Live smoke test against a real video
+
+The example below uses [プリマドンナ / 星街すいせい](https://www.youtube.com/watch?v=M1GYqy0tHV0) (Hoshimachi Suisei · Suisei Channel, 2:52) — a Japanese music video that exercises every layer of the pipeline: multilingual Whisper transcription, music detection via librosa HPSS, rapid scene cuts via PySceneDetect, and animation detection via OpenCV pixel-diff.
+
+```python
+from server.utils.downloader import VideoDownloader
+from server.tools.transcript import get_transcript
+from server.tools.audio import AudioAnalyzer
+from server.tools.frames import detect_scene_timestamps
+
+URL = "https://www.youtube.com/watch?v=M1GYqy0tHV0"
+
+d = VideoDownloader()
+video_path, audio_path, info = d.download(URL)
+
+print(f"Title:    {info.title}")        # プリマドンナ / 星街すいせい(official)
+print(f"Duration: {info.duration:.0f}s")  # 172
+
+transcript = get_transcript(audio_path, model_size="base")
+print(f"Language: {transcript['language']}")  # ja
+
+cuts = detect_scene_timestamps(video_path)
+print(f"Scene cuts detected: {len(cuts)}")    # typically 30–60 for a music video
+
+analyzer = AudioAnalyzer(audio_path)
+seg = analyzer.analyze_segment(0, 30)
+print(f"First 30s — energy: {seg['energy']}, music: {seg['music']}")
+# energy: 'medium' or 'high', music: True
+```
+
+For the full test guide — fixtures, mock patterns, writing tests for new tools — see [**docs/testing.md**](docs/testing.md).
+
+---
+
 ## Architecture
 
 For a detailed explanation of system design, data flows, and how to add new tools:
@@ -296,6 +366,7 @@ For a detailed explanation of system design, data flows, and how to add new tool
 - [**docs/architecture.md**](docs/architecture.md) — pipeline diagrams and key design decisions
 - [**docs/python-server.md**](docs/python-server.md) — component reference for all modules
 - [**docs/extending.md**](docs/extending.md) — how to add new tools
+- [**docs/testing.md**](docs/testing.md) — test suite structure, fixtures, and writing new tests
 
 ---
 
