@@ -1,35 +1,33 @@
 # Architecture Overview
 
-This document explains the overall system design of `yt-mcp`, the data flow through each pipeline, and the key design decisions made along the way.
+This document explains the overall system design of `yt-mcp`, the data flow through the processing pipeline, and the key design decisions made along the way.
+
+> **Scope:** This document covers the Python server (`server/`), which is the primary implementation. The TypeScript server (`src/`) is not under active development; its design is described briefly at the [end of this document](#typescript-server--not-actively-developed) for reference.
 
 ---
 
-## Two Servers, One Purpose
+## How the server fits into MCP
 
-`yt-mcp` is structured as two independent MCP servers that solve the same problem from opposite directions:
+`yt-mcp` is a local MCP server. The AI assistant (Claude Code or Claude Desktop) spawns it as a subprocess and communicates over stdin/stdout via JSON-RPC 2.0:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    AI Assistant                      │
-│              (Claude Code / Desktop)                 │
-└──────────────────┬──────────────────────────────────┘
-                   │  MCP stdio (JSON-RPC 2.0)
-          ┌────────┴────────┐
-          │                 │
-┌─────────▼──────┐  ┌───────▼────────────┐
-│  Python Server │  │ TypeScript Server  │
-│  server/       │  │ src/               │
-│                │  │                    │
-│  Local only    │  │ Gemini API         │
-│  No API keys   │  │ Requires key       │
-│  Heavy: FFmpeg │  │ Light: URL → AI    │
-│  Whisper, etc. │  │                    │
-└────────────────┘  └────────────────────┘
+┌──────────────────────────────────────┐
+│           AI Assistant               │
+│       (Claude Code / Desktop)        │
+└─────────────────┬────────────────────┘
+                  │  MCP stdio (JSON-RPC 2.0)
+                  │
+        ┌─────────▼──────────┐
+        │   Python Server    │
+        │   server/          │
+        │                    │
+        │   Local only       │
+        │   No API keys      │
+        │   FFmpeg · Whisper │
+        │   PySceneDetect    │
+        │   librosa          │
+        └────────────────────┘
 ```
-
-The two servers complement each other:
-- **Python server** gives you raw, verifiable signal: exact word timestamps, actual audio dB levels, real pixel diffs. Useful for research, content analysis, or when you need ground truth.
-- **TypeScript server** gives you fast semantic understanding: summaries, Q&A, AI-selected screenshots — without downloading anything locally. Useful for quick exploration.
 
 ---
 
@@ -158,7 +156,9 @@ A segment is classified as music when `harmonic_ratio > 0.25 AND spectral_flatne
 
 ---
 
-## TypeScript Server Pipeline
+## TypeScript Server (not actively developed)
+
+> The TypeScript server (`src/`) is kept for reference only and is not under active development. The Python server above is the implementation to use.
 
 ### End-to-end data flow
 
@@ -229,24 +229,14 @@ All tool inputs pass through [Zod](https://zod.dev) schemas defined in `validato
 
 ### Error taxonomy
 
-Both servers use typed error hierarchies to produce actionable user-facing messages:
+The Python server uses a typed error hierarchy to produce actionable user-facing messages:
 
-**TypeScript:**
-```
-Error
-└── VideoAnalysisError     — Gemini analysis failure (base class)
-    └── VideoAccessError   — Video is private or geo-restricted
-DependencyError            — yt-dlp or ffmpeg not found in PATH
-ScreenshotExtractionError  — Frame extraction failure (includes timestamp)
-```
-
-**Python:**
 ```
 Exception
 └── DownloadError          — yt-dlp or ffmpeg failure
 ```
 
-All errors are caught at the MCP handler layer and serialized so the AI assistant sees a structured `{"error": "..."}` message rather than a raw exception traceback.
+All errors are caught at the MCP handler layer and serialized so the AI assistant always sees a structured `{"error": "..."}` message rather than a raw Python traceback.
 
 ---
 
@@ -263,9 +253,9 @@ Benefits of this design:
 
 ## Key Design Decisions
 
-### Why two separate servers?
+### Why fully local?
 
-The local Python server and the cloud TypeScript server have fundamentally different dependency and operational profiles. Bundling them would force users who only want quick Gemini summaries to install FFmpeg, Whisper, and 2+ GB of ML model weights — and vice versa. Keeping them separate lets each server be installed and used independently.
+Running everything on-device means no API keys, no data leaving the machine, and deterministic output. The signals produced (exact word timestamps, real audio dB levels, actual pixel diffs) are verifiable ground truth rather than AI-generated approximations — which matters for research and content analysis use cases.
 
 ### Why 16kHz mono WAV?
 

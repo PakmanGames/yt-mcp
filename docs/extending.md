@@ -1,6 +1,6 @@
 # Extending yt-mcp
 
-This guide explains how to add new tools to either server. Both servers are designed to be extended — adding a tool is a small, contained change.
+This guide explains how to add new tools to the Python server (`server/`), which is the primary implementation. The TypeScript server (`src/`) is not under active development; its extension pattern is documented at the [end of this file](#adding-a-tool-to-the-typescript-server--archived) for reference only.
 
 ---
 
@@ -95,7 +95,9 @@ print(my_analysis(vp, 'default'))
 
 ---
 
-## Adding a tool to the TypeScript server
+## Adding a tool to the TypeScript server (archived)
+
+> The TypeScript server is not under active development. This section is kept for reference only.
 
 The TypeScript server requires changes in three files: `tools.ts`, `validators.ts`, and `index.ts`.
 
@@ -207,27 +209,26 @@ pnpm test:run
 
 ---
 
-## Choosing where to add a new tool
+## Choosing where to put new logic
 
-| Your tool needs... | Add to |
+All new tools should go in the Python server. The module to extend depends on what the tool does:
+
+| Your tool needs... | Module |
 |---|---|
-| Exact transcript text with timestamps | Python server (`transcript.py`) |
-| Audio dB levels, tempo, music detection | Python server (`audio.py`) |
-| Scene cut detection | Python server (`frames.py`) |
-| Semantic understanding, summaries, Q&A | TypeScript server (`gemini-client.ts`) |
-| Frame extraction at specific timestamps | Either server |
-| No API keys or internet at runtime | Python server |
-| Fast turnaround, no local install requirements | TypeScript server |
+| Exact transcript text with timestamps | `server/tools/transcript.py` |
+| Audio dB levels, tempo, music detection | `server/tools/audio.py` |
+| Scene cut detection or frame extraction | `server/tools/frames.py` |
+| Unified multi-signal timeline | `server/tools/timeline.py` |
+| Download / cache management | `server/utils/downloader.py` |
 
-If your tool requires both exact signal extraction *and* semantic understanding, consider implementing it in the Python server and using the structured output as context for a separate LLM call in your own application layer.
+If your tool needs semantic understanding (summaries, Q&A), implement it in the Python server and pass the structured JSON output as context to an LLM call in your own application layer — rather than using the TypeScript server.
 
 ---
 
 ## General guidelines
 
 - **Keep tools focused.** Each tool should do one thing well. The `get_full_context` tool is an exception — it exists as a convenience wrapper combining all signals.
-- **Return structured JSON from Python tools.** This lets the AI assistant parse and reason about the data, not just display it.
-- **Return markdown-formatted text from TypeScript tools.** Gemini's output is prose; format it with headers and bullet points for readability.
-- **Handle errors at every boundary.** Don't let an FFmpeg or API failure surface as an unhandled exception — always return `{"error": "..."}` (Python) or `{ content: [...], isError: true }` (TypeScript).
-- **Document the return schema.** Add a docstring or JSDoc comment showing example output. This helps both humans and AI assistants understand what to expect.
+- **Return structured JSON.** This lets the AI assistant parse and reason about the data, not just display it.
+- **Handle errors at every boundary.** Don't let an FFmpeg failure surface as an unhandled exception — always return `{"error": "..."}`.
+- **Document the return schema.** Add a docstring showing example output. This helps both humans and AI assistants understand what to expect.
 - **Cache expensive operations.** If your tool runs a slow computation (model inference, video decoding), cache results to disk keyed by video ID. See `VideoDownloader` in `server/utils/downloader.py` for the established pattern.

@@ -1,4 +1,8 @@
-# TypeScript Server — Component Reference
+# TypeScript Server — Component Reference (archived)
+
+> **This server is not under active development.**
+>
+> The Python server (`server/`) is the primary implementation of `yt-mcp`. The TypeScript server is kept in the repository for reference only and will not receive further updates. For setup and usage, see the [README](../README.md) and [docs/python-server.md](python-server.md).
 
 The TypeScript server (`src/`) is a cloud-based MCP server that uses Google's Gemini API to analyze YouTube videos. Gemini understands YouTube URLs natively, so no local video download is required for summarization or Q&A. Frame extraction tools do use yt-dlp + ffmpeg locally.
 

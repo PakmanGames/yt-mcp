@@ -1,44 +1,28 @@
 # yt-mcp
 
-A collection of two complementary MCP (Model Context Protocol) servers that give AI assistants deep, multi-modal awareness of YouTube videos.
+A fully local MCP (Model Context Protocol) server that gives AI assistants deep, multi-modal awareness of YouTube videos. **No API keys required.** All processing runs on-device via yt-dlp, OpenAI Whisper, FFmpeg, PySceneDetect, and librosa.
 
-| | Python Server (`server/`) | TypeScript Server (`src/`) |
-|---|---|---|
-| **Approach** | Fully local processing | Cloud via Gemini API |
-| **API Key Required** | No | Yes (Gemini) |
-| **Capabilities** | Transcript · Frames · Audio · Unified timeline | Summarize · Q&A · Smart screenshot extraction |
-| **Best for** | Privacy, offline use, detailed signal extraction | Fast answers, no local dependencies |
-| **Language** | Python 3.10+ | Node.js 18+ |
-
-Both servers implement the [MCP stdio transport](https://modelcontextprotocol.io) and can be used side-by-side in Claude Code or Claude Desktop.
+> **Note:** This repository also contains an experimental TypeScript server (`src/`) that uses the Gemini API. That server is **not under active development** — the Python local server (`server/`) is the primary implementation.
 
 ---
 
 ## Table of Contents
 
-- [Python Server — Local Pipeline](#python-server--local-pipeline)
-  - [How it works](#how-it-works)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [MCP integration](#mcp-integration-python)
-  - [Tools](#tools-python)
-- [TypeScript Server — Gemini API](#typescript-server--gemini-api)
-  - [How it works](#how-it-works-1)
-  - [Prerequisites](#prerequisites-1)
-  - [Installation](#installation-1)
-  - [MCP integration](#mcp-integration-typescript)
-  - [Tools](#tools-typescript)
+- [How it works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [MCP integration](#mcp-integration)
+- [Tools](#tools)
 - [Supported URL Formats](#supported-url-formats)
 - [Environment Variables](#environment-variables)
 - [Development](#development)
 - [Architecture](#architecture)
+- [TypeScript Server (archived)](#typescript-server--archived)
 - [License](#license)
 
 ---
 
-## Python Server — Local Pipeline
-
-### How it works
+## How it works
 
 ```
 YouTube URL
@@ -67,7 +51,9 @@ timeline.py ─────────── unified JSON timeline (all signals
 
 All results are cached in `/tmp/yt-analysis-cache/<video_id>/`. Re-calling the same URL is instant.
 
-### Prerequisites
+---
+
+## Prerequisites
 
 ```bash
 # macOS
@@ -81,38 +67,61 @@ ffmpeg -version
 python3 --version   # must be 3.10+
 ```
 
-### Installation
+---
+
+## Installation
 
 ```bash
 git clone https://github.com/yourusername/yt-mcp.git
 cd yt-mcp
+
+# Create and activate a virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows
+
 pip install -r requirements.txt
 ```
 
 Whisper model weights download automatically on the first transcription call (~75 MB for `base`, ~1.5 GB for `large`).
 
-### MCP Integration (Python)
+---
+
+## MCP integration
+
+MCP clients spawn the server as a subprocess — they do **not** activate your shell or venv automatically. You must point them at the venv's Python interpreter directly using its absolute path.
+
+Find your interpreter path after activating the venv:
+```bash
+source .venv/bin/activate
+which python   # e.g. /Users/you/repos/yt-mcp/.venv/bin/python
+```
 
 **Claude Code:**
 ```bash
-claude mcp add -s user yt-local -- python /path/to/yt-mcp/server/main.py
+claude mcp add -s user yt-mcp -- /path/to/yt-mcp/.venv/bin/python /path/to/yt-mcp/server/main.py
 ```
 
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "yt-local": {
-      "command": "python",
+    "yt-mcp": {
+      "command": "/path/to/yt-mcp/.venv/bin/python",
       "args": ["/path/to/yt-mcp/server/main.py"]
     }
   }
 }
 ```
 
-### Tools (Python)
+> Replace `/path/to/yt-mcp` with the absolute path to wherever you cloned the repo.
+> On Windows the interpreter is at `.venv\Scripts\python.exe`.
 
-#### `get_video_transcript`
+---
+
+## Tools
+
+### `get_video_transcript`
 
 Transcribe a YouTube video using OpenAI Whisper (runs entirely locally).
 
@@ -139,7 +148,7 @@ Transcribe a YouTube video using OpenAI Whisper (runs entirely locally).
 }
 ```
 
-#### `get_video_frames`
+### `get_video_frames`
 
 Extract keyframes as base64-encoded JPEGs. Uses PySceneDetect for scene detection and FFmpeg for extraction.
 
@@ -170,7 +179,7 @@ Extract keyframes as base64-encoded JPEGs. Uses PySceneDetect for scene detectio
 }
 ```
 
-#### `get_audio_features`
+### `get_audio_features`
 
 Analyze audio characteristics using librosa (runs locally).
 
@@ -198,7 +207,7 @@ Analyze audio characteristics using librosa (runs locally).
 }
 ```
 
-#### `get_full_context`
+### `get_full_context`
 
 **Primary tool.** Returns a complete, synchronized multi-modal timeline — transcript + scene boundaries + animation detection + audio features, all time-aligned.
 
@@ -241,135 +250,7 @@ Analyze audio characteristics using librosa (runs locally).
 
 ---
 
-## TypeScript Server — Gemini API
-
-### How it works
-
-```
-YouTube URL
-    │
-    ▼
-GeminiVideoClient ────── pass URL directly to Gemini (no local download)
-    │                    Gemini fetches and understands the video natively
-    ▼
-YouTubeMetadataClient ── optional: fetch title/channel via YouTube Data API v3
-    │
-    ▼
-ScreenshotExtractor ──── yt-dlp + ffmpeg for frame extraction at timestamps
-                         (only needed for extract_screenshots / extract_frames)
-```
-
-Gemini processes the video natively by URL — no local video download is needed for summarization or Q&A.
-
-### Prerequisites
-
-- **Node.js 18+**
-- **Gemini API key** — get one at [Google AI Studio](https://aistudio.google.com/apikey)
-- **yt-dlp + ffmpeg** — only needed for the `extract_screenshots` and `extract_frames` tools
-
-```bash
-# macOS (for screenshot tools)
-brew install yt-dlp ffmpeg
-
-# Verify
-node --version   # must be 18+
-```
-
-### Installation
-
-```bash
-git clone https://github.com/yourusername/yt-mcp.git
-cd yt-mcp
-pnpm install
-pnpm build
-```
-
-Copy the example environment file and fill in your key:
-```bash
-cp .env.example .env
-# Edit .env and set GEMINI_API_KEY=your-key-here
-```
-
-### MCP Integration (TypeScript)
-
-**Claude Code:**
-```bash
-claude mcp add -s user -e GEMINI_API_KEY=your-key yt-gemini -- node /path/to/yt-mcp/dist/index.js
-```
-
-**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "yt-gemini": {
-      "command": "node",
-      "args": ["/path/to/yt-mcp/dist/index.js"],
-      "env": {
-        "GEMINI_API_KEY": "your-key"
-      }
-    }
-  }
-}
-```
-
-### Tools (TypeScript)
-
-#### `summarize_video`
-
-Summarize a YouTube video using Gemini. No local download required.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `youtube_url` | string | — | Full YouTube URL |
-| `detail_level` | string | `medium` | `brief` · `medium` · `detailed` |
-
-#### `ask_about_video`
-
-Ask a specific question about a video's content.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `youtube_url` | string | — | Full YouTube URL |
-| `question` | string | — | Your question about the video |
-
-#### `get_video_timestamps`
-
-Preview mode: identify important moments without extracting frames. Use this before `extract_screenshots` to preview timestamp selection.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `youtube_url` | string | — | Full YouTube URL |
-| `count` | number | `5` | Number of timestamps to identify (1–20) |
-| `focus` | string | — | Optional focus hint (e.g. `"product demos"`, `"code examples"`) |
-
-#### `extract_screenshots`
-
-Extract key frames at AI-identified important moments. Returns base64 images and optionally saves to disk.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `youtube_url` | string | — | Full YouTube URL |
-| `count` | number | `5` | Number of screenshots (1–20) |
-| `output_dir` | string | — | Directory to save files (optional) |
-| `focus` | string | — | Focus hint for timestamp selection |
-| `resolution` | string | `large` | `thumbnail` (160p) · `small` (360p) · `medium` (720p) · `large` (1080p) · `full` |
-
-#### `extract_frames`
-
-Extract frames at timestamps you specify manually — use when you already know which moments you want.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `youtube_url` | string | — | Full YouTube URL |
-| `timestamps` | number[] | — | Array of seconds, e.g. `[5, 30, 120]` (1–20 entries) |
-| `output_dir` | string | — | Directory to save files (optional) |
-| `resolution` | string | `large` | Same options as `extract_screenshots` |
-
----
-
 ## Supported URL Formats
-
-Both servers accept any of these YouTube URL formats:
 
 ```
 https://www.youtube.com/watch?v=VIDEO_ID
@@ -381,28 +262,18 @@ https://youtube.com/shorts/VIDEO_ID
 
 ## Environment Variables
 
-### Python Server
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `YT_CACHE_DIR` | `/tmp/yt-analysis-cache` | Cache directory for downloaded videos and audio |
-
-### TypeScript Server
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GEMINI_API_KEY` | — | **Required.** Your Gemini API key |
-| `GEMINI_MODEL` | `gemini-3-flash-preview` | Gemini model identifier |
-| `YOUTUBE_API_KEY` | falls back to `GEMINI_API_KEY` | YouTube Data API v3 key for metadata enrichment |
-| `SCREENSHOT_OUTPUT_DIR` | system temp dir | Default directory for saved screenshots |
 
 ---
 
 ## Development
 
-### Python Server
-
 ```bash
+# Activate the venv first
+source .venv/bin/activate
+
 # Run the server directly (stdio mode — same as MCP clients use)
 python server/main.py
 
@@ -416,35 +287,25 @@ print(get_transcript(ap)['language'])
 "
 ```
 
-### TypeScript Server
-
-```bash
-# Development mode (tsx, no build step needed)
-pnpm dev
-
-# Compile TypeScript → dist/
-pnpm build
-
-# Run compiled server
-pnpm start
-
-# Run all tests
-pnpm test
-
-# Run tests once (CI mode)
-pnpm test:run
-```
-
 ---
 
 ## Architecture
 
 For a detailed explanation of system design, data flows, and how to add new tools:
 
-- [**docs/architecture.md**](docs/architecture.md) — overall system design and pipeline diagrams
-- [**docs/python-server.md**](docs/python-server.md) — Python local server component reference
-- [**docs/typescript-server.md**](docs/typescript-server.md) — TypeScript Gemini server component reference
-- [**docs/extending.md**](docs/extending.md) — how to add new tools to either server
+- [**docs/architecture.md**](docs/architecture.md) — pipeline diagrams and key design decisions
+- [**docs/python-server.md**](docs/python-server.md) — component reference for all modules
+- [**docs/extending.md**](docs/extending.md) — how to add new tools
+
+---
+
+## TypeScript Server (archived)
+
+The `src/` directory contains an experimental TypeScript server that delegates video analysis to the Gemini API. It is **not under active development** and is kept only for reference.
+
+If you're looking for fast cloud-based video Q&A, the TypeScript server's approach (passing the YouTube URL directly to Gemini) works well for a quick prototype — but the Python server is the only implementation that will receive ongoing maintenance.
+
+See [docs/typescript-server.md](docs/typescript-server.md) for its API reference.
 
 ---
 
