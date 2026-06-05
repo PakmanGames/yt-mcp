@@ -417,6 +417,7 @@ For the full test guide — fixtures, mock patterns, writing tests for new tools
 | [**docs/python-server.md**](docs/python-server.md) | Component reference for every module |
 | [**docs/extending.md**](docs/extending.md) | How to add new tools |
 | [**docs/testing.md**](docs/testing.md) | Test suite structure, fixtures, and writing new tests |
+| [**TODO.md**](TODO.md) | Running roadmap of planned improvements and ideas |
 
 ---
 
