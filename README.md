@@ -8,6 +8,7 @@ A fully local MCP (Model Context Protocol) server that gives AI assistants deep,
 
 ## Table of Contents
 
+- [System overview](#system-overview)
 - [How it works](#how-it-works)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -17,40 +18,69 @@ A fully local MCP (Model Context Protocol) server that gives AI assistants deep,
 - [Environment Variables](#environment-variables)
 - [Development](#development)
 - [Testing](#testing)
-- [Architecture](#architecture)
+- [Documentation](#documentation)
 - [TypeScript Server (archived)](#typescript-server--archived)
 - [License](#license)
 
 ---
 
+## System overview
+
+`yt-mcp` runs as a local subprocess that an AI assistant spawns and talks to over stdio using JSON-RPC 2.0. The assistant calls tools; the server downloads the video once, extracts multi-modal signals on-device, caches everything to disk, and returns structured JSON. No data leaves the machine except the one-time download from YouTube.
+
+```mermaid
+flowchart LR
+    subgraph client["AI Assistant"]
+        A["Claude Code / Desktop"]
+    end
+
+    subgraph server["yt-mcp · local subprocess"]
+        M["FastMCP server<br/>get_video_transcript · get_video_frames<br/>get_audio_features · get_full_context"]
+        P["Local pipeline<br/>yt-dlp · Whisper · FFmpeg<br/>PySceneDetect · OpenCV · librosa"]
+        C[("Disk cache<br/>/tmp/yt-analysis-cache/&lt;video_id&gt;")]
+        M --> P
+        P <--> C
+    end
+
+    YT[("YouTube")]
+
+    A -- "JSON-RPC 2.0 (stdio)" --> M
+    M -- "JSON result" --> A
+    P -- "download once" --> YT
+
+    classDef store fill:#fff3cd,stroke:#d39e00,color:#332701;
+    class C,YT store;
+```
+
+---
+
 ## How it works
 
-```
-YouTube URL
-    │
-    ▼
-yt-dlp ──────────────── download video.mp4
-    │                   extract audio.wav (16 kHz mono)
-    ▼
-Whisper ─────────────── timestamped transcript (word-level)
-    │
-    ▼
-PySceneDetect ────────── detect scene-cut timestamps
-    │
-    ▼
-FFmpeg ──────────────── extract keyframe JPEGs at scene cuts
-    │
-    ▼
-OpenCV ──────────────── pixel-diff animation detection
-    │
-    ▼
-librosa ─────────────── energy · tempo · music vs speech
-    │
-    ▼
-timeline.py ─────────── unified JSON timeline (all signals, time-aligned)
+A single download feeds three parallel analysis tracks, which `timeline.py` then re-aligns into one time-indexed JSON document.
+
+```mermaid
+flowchart TD
+    URL([YouTube URL]) --> DL["<b>yt-dlp</b><br/>download video.mp4<br/>extract audio.wav · 16 kHz mono"]
+
+    DL -->|audio.wav| W["<b>Whisper</b><br/>word-level transcript"]
+    DL -->|video.mp4| SD["<b>PySceneDetect</b><br/>scene-cut timestamps"]
+    DL -->|audio.wav| LR["<b>librosa</b><br/>energy · tempo · music vs speech"]
+
+    SD --> FF["<b>FFmpeg</b><br/>keyframe JPEG at each cut"]
+    SD --> CV["<b>OpenCV</b><br/>pixel-diff animation detection"]
+
+    W --> TL["<b>timeline.py</b><br/>unified, time-aligned segments"]
+    FF --> TL
+    CV --> TL
+    LR --> TL
+
+    TL --> OUT([Structured JSON → MCP client])
+
+    classDef io fill:#d1e7dd,stroke:#0f5132,color:#03190f;
+    class URL,OUT io;
 ```
 
-All results are cached in `/tmp/yt-analysis-cache/<video_id>/`. Re-calling the same URL is instant.
+All results are cached in `/tmp/yt-analysis-cache/<video_id>/`. Re-calling the same URL is instant — only the first call pays the download + transcription cost.
 
 ---
 
@@ -84,7 +114,7 @@ source .venv/bin/activate        # macOS / Linux
 pip install -r requirements.txt
 ```
 
-Whisper model weights download automatically on the first transcription call (~75 MB for `base`, ~1.5 GB for `large`).
+Whisper model weights download automatically on the first transcription call (~142 MB for `base`, ~2.9 GB for `large`).
 
 ---
 
@@ -121,6 +151,27 @@ claude mcp add -s user yt-mcp -- /path/to/yt-mcp/.venv/bin/python /path/to/yt-mc
 ---
 
 ## Tools
+
+The server exposes four tools. `get_full_context` is the primary one — it combines every signal into a single timeline. Reach for the others when you need just one modality or want to control token usage.
+
+```mermaid
+flowchart TD
+    Q{"What do you need?"}
+    Q -->|"Complete situational awareness"| FC["<b>get_full_context</b><br/>transcript + scenes + audio,<br/>time-aligned · start here"]
+    Q -->|"Exact words + timestamps"| TR["<b>get_video_transcript</b><br/>Whisper, word-level"]
+    Q -->|"Visual keyframes"| FR["<b>get_video_frames</b><br/>JPEGs at scene cuts / intervals"]
+    Q -->|"Energy · tempo · music"| AU["<b>get_audio_features</b><br/>librosa, per window"]
+
+    classDef primary fill:#cfe2ff,stroke:#084298,color:#031633;
+    class FC primary;
+```
+
+| Tool | Modality | Returns base64 images? | Safe for long videos? |
+|---|---|---|---|
+| `get_full_context` | All (transcript + scene + audio) | Only if `include_frames=true` | Yes (default `include_frames=false`) |
+| `get_video_transcript` | Speech → text | No | Yes |
+| `get_video_frames` | Visual | Yes (always) | Use on short clips / specific ranges |
+| `get_audio_features` | Audio | No | Yes |
 
 ### `get_video_transcript`
 
@@ -359,14 +410,15 @@ For the full test guide — fixtures, mock patterns, writing tests for new tools
 
 ---
 
-## Architecture
+## Documentation
 
-For a detailed explanation of system design, data flows, and how to add new tools:
-
-- [**docs/architecture.md**](docs/architecture.md) — pipeline diagrams and key design decisions
-- [**docs/python-server.md**](docs/python-server.md) — component reference for all modules
-- [**docs/extending.md**](docs/extending.md) — how to add new tools
-- [**docs/testing.md**](docs/testing.md) — test suite structure, fixtures, and writing new tests
+| Document | What it covers |
+|---|---|
+| [**SPEC.md**](SPEC.md) | Formal specification — tool contracts, data schemas, algorithms, thresholds, and the error model. The authoritative reference. |
+| [**docs/architecture.md**](docs/architecture.md) | System design, data-flow and UML diagrams, and key design decisions |
+| [**docs/python-server.md**](docs/python-server.md) | Component reference for every module |
+| [**docs/extending.md**](docs/extending.md) | How to add new tools |
+| [**docs/testing.md**](docs/testing.md) | Test suite structure, fixtures, and writing new tests |
 
 ---
 
