@@ -9,6 +9,10 @@ dependencies = [
     "mcp>=1.0.0",
     "yt-dlp>=2024.1.1",
     "openai-whisper>=20231117",
+    # torch is whisper's heavy runtime dependency. It is declared directly (not
+    # left transitive) so the CPU-index source mapping in [tool.uv.sources] below
+    # takes effect — uv only honors sources for the project's *direct* deps.
+    "torch>=2.0.0",
     "librosa>=0.10.0",
     "numpy>=1.24.0",
     "soundfile>=0.12.0",
@@ -28,3 +32,26 @@ dev = [
 # environment and dependencies without trying to build/install the repo itself.
 [tool.uv]
 package = false
+
+# --- torch wheel source ------------------------------------------------------
+# DESIGN DECISION (issue #1 — Docker deployment): source torch from the CPU-only
+# PyTorch wheel index on Linux.
+#
+# Whisper transcription runs on CPU by default (model="base"). The stock torch
+# wheel on PyPI declares the entire NVIDIA CUDA stack as Linux dependencies
+# (cuDNN, cuBLAS, NCCL, cuFFT, … ≈ 3 GB compressed), which would push the
+# container to ~6 GB with libraries that never execute on a CPU host. Pulling
+# torch from the CPU index drops all of them, keeping the deployable image at
+# ~2.8 GB and runnable anywhere.
+#
+# The `sys_platform == 'linux'` marker scopes this to Linux only — macOS keeps
+# resolving torch from PyPI (already CPU/MPS there), so local dev on a Mac is
+# unaffected. To build a GPU-accelerated image instead, drop this source mapping,
+# re-lock, and build on a CUDA base image. See docs/deployment.md.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]

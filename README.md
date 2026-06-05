@@ -13,6 +13,7 @@ A fully local MCP (Model Context Protocol) server that gives AI assistants deep,
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [MCP integration](#mcp-integration)
+- [Docker](#docker)
 - [Tools](#tools)
 - [Supported URL Formats](#supported-url-formats)
 - [Environment Variables](#environment-variables)
@@ -149,6 +150,31 @@ claude mcp add -s user yt-mcp -- /path/to/yt-mcp/.venv/bin/python /path/to/yt-mc
 
 > Replace `/path/to/yt-mcp` with the absolute path to wherever you cloned the repo.
 > On Windows the interpreter is at `.venv\Scripts\python.exe`.
+
+---
+
+## Docker
+
+Prefer not to install FFmpeg, Python, and the ML stack on the host? Build the
+image and let the MCP client spawn it. The server speaks MCP over **stdio**, so
+the container must be run with `-i` (interactive stdin):
+
+```bash
+docker build -t yt-mcp .
+docker run -i --rm -v yt-mcp-cache:/data/cache yt-mcp
+```
+
+Wire it into a client the same way as the local install, but with `docker` as the
+command:
+
+```bash
+claude mcp add -s user yt-mcp -- docker run -i --rm -v yt-mcp-cache:/data/cache yt-mcp
+```
+
+The `-v yt-mcp-cache:/data/cache` volume persists downloaded videos and Whisper
+model weights across runs. The image installs the **CPU-only** build of PyTorch
+on purpose — see [docs/deployment.md](docs/deployment.md) for the build details,
+the cache layout, and the rationale (plus how to build a GPU variant).
 
 ---
 
@@ -417,6 +443,7 @@ For the full test guide — fixtures, mock patterns, writing tests for new tools
 | [**docs/python-server.md**](docs/python-server.md) | Component reference for every module |
 | [**docs/extending.md**](docs/extending.md) | How to add new tools |
 | [**docs/testing.md**](docs/testing.md) | Test suite structure, fixtures, and writing new tests |
+| [**docs/deployment.md**](docs/deployment.md) | Docker build & run, MCP client config, cache volume, and the CPU-torch design decision |
 | [**TODO.md**](TODO.md) | Running roadmap of planned improvements and ideas |
 
 ---

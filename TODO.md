@@ -23,9 +23,9 @@ High-leverage, self-contained, ready to start.
   - **Sketch:** Workflow on push/PR that runs `uv sync` then `uv run pytest`, across a Python `3.10`–`3.12` matrix. Optionally cache the uv store.
   - **Evidence/links:** no `.github/`; `pyproject.toml` (uv-managed); [docs/testing.md](docs/testing.md).
 
-- [ ] **Provide a Dockerfile.** `M`
+- [x] **Provide a Dockerfile.** `M` — resolves issue **#1**.
   - **Why:** Open request to make build/deploy easy; `ffmpeg` is the one heavyweight system dependency, so a prebuilt image removes the main setup friction.
-  - **Sketch:** Base image with `ffmpeg` + `uv`; `uv sync --no-dev`; entrypoint runs the server over stdio. Document the volume mount for `YT_CACHE_DIR` so the cache (and Whisper weights) persist.
+  - **Done:** [`Dockerfile`](Dockerfile) — `python:3.11-slim` + `ffmpeg`/`uv`, `uv sync --frozen --no-dev`, non-root user, stdio entrypoint, `/data/cache` volume persisting both videos (`YT_CACHE_DIR`) and Whisper weights (`XDG_CACHE_HOME`). Ships **CPU-only torch** (CUDA stack dropped → ~2.8 GB vs ~6 GB); see [docs/deployment.md](docs/deployment.md).
   - **Evidence/links:** GitHub issue **#1** ("Create a docker file for easy build and deployment"); `ffmpeg` dependency per [SPEC.md §13](SPEC.md#13-compatibility-and-dependencies).
 
 ---
