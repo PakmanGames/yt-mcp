@@ -1,0 +1,44 @@
+# Keep the build context small and the image clean. The Dockerfile only needs
+# pyproject.toml, uv.lock, and server/ — everything below is excluded from the
+# context sent to the daemon.
+
+# Local virtualenv — large, and rebuilt inside the image
+.venv/
+
+# Version control and CI
+.git/
+.github/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Archived TypeScript server and its Node tooling (not part of this image)
+src/
+node_modules/
+dist/
+package.json
+pnpm-lock.yaml
+tsconfig.json
+vitest.config.ts
+
+# Tests, docs, and project meta — not needed at runtime
+tests/
+docs/
+*.md
+SPEC.md
+LICENSE
+
+# Secrets, editor, OS, and agent cruft
+.env
+.env.local
+.env.example
+.claude/
+.DS_Store
+*.log
+
+# Don't ship the Docker build files into the context either
+Dockerfile
+.dockerignore
