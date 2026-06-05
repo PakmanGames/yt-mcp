@@ -8,26 +8,37 @@ This document explains the overall system design of `yt-mcp`, the data flow thro
 
 ## How the server fits into MCP
 
-`yt-mcp` is a local MCP server. The AI assistant (Claude Code or Claude Desktop) spawns it as a subprocess and communicates over stdin/stdout via JSON-RPC 2.0:
+`yt-mcp` is a local MCP server. The AI assistant (Claude Code or Claude Desktop) spawns it as a subprocess and communicates over stdin/stdout via JSON-RPC 2.0. The server holds no network ports and requires no API keys — every dependency (FFmpeg, Whisper, PySceneDetect, librosa) runs on-device.
 
+The diagram below shows a typical `get_full_context` call. The first call pays the download + transcription cost; every later call for the same video is served from the on-disk cache.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as AI Assistant<br/>(Claude Code / Desktop)
+    participant S as yt-mcp server<br/>(FastMCP, stdio)
+    participant D as VideoDownloader
+    participant C as Disk cache
+    participant Y as YouTube
+
+    A->>S: initialize / tools/list (JSON-RPC)
+    S-->>A: 4 tools advertised
+    A->>S: tools/call get_full_context(url)
+    S->>D: download(url)
+    D->>C: cache hit?
+    alt cache miss (first call)
+        D->>Y: yt-dlp download video.mp4
+        D->>D: ffmpeg → audio.wav (16 kHz mono)
+        D->>C: write video.mp4 · audio.wav · info.json
+    else cache hit
+        C-->>D: existing paths + info.json
+    end
+    D-->>S: (video_path, audio_path, VideoInfo)
+    S->>S: Whisper + PySceneDetect + librosa + build_timeline
+    S-->>A: JSON timeline (text content)
 ```
-┌──────────────────────────────────────┐
-│           AI Assistant               │
-│       (Claude Code / Desktop)        │
-└─────────────────┬────────────────────┘
-                  │  MCP stdio (JSON-RPC 2.0)
-                  │
-        ┌─────────▼──────────┐
-        │   Python Server    │
-        │   server/          │
-        │                    │
-        │   Local only       │
-        │   No API keys      │
-        │   FFmpeg · Whisper │
-        │   PySceneDetect    │
-        │   librosa          │
-        └────────────────────┘
-```
+
+> Errors never escape as tracebacks: each pipeline stage is wrapped so the assistant always receives a structured `{"error": "..."}` payload instead. See [Error taxonomy](#error-taxonomy).
 
 ---
 
@@ -35,79 +46,49 @@ This document explains the overall system design of `yt-mcp`, the data flow thro
 
 ### End-to-end data flow
 
-```
-youtube_url
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│ VideoDownloader (server/utils/downloader.py)         │
-│                                                     │
-│  1. yt_dlp.extract_info() → video metadata          │
-│  2. Check cache: /tmp/yt-analysis-cache/<id>/       │
-│     ├─ video.mp4  (downloaded video)                │
-│     ├─ audio.wav  (16kHz mono WAV)                  │
-│     └─ info.json  (metadata snapshot)               │
-│  3. If cache miss:                                  │
-│     a. yt-dlp download → video.mp4                  │
-│     b. ffmpeg: video.mp4 → audio.wav                │
-│        (pcm_s16le, 16kHz, mono)                     │
-└──────────────┬──────────────────────────────────────┘
-               │ (video_path, audio_path, VideoInfo)
-               │
-    ┌──────────┴──────────────────────────────┐
-    │                                         │
-    ▼                                         ▼
-┌───────────────────┐              ┌──────────────────────────┐
-│ Transcript        │              │ Frames                   │
-│ (tools/transcript)│              │ (tools/frames.py)        │
-│                   │              │                          │
-│ whisper.load_     │              │ PySceneDetect:           │
-│   model(size)     │              │   ContentDetector        │
-│ model.transcribe( │              │   → cut timestamps       │
-│   word_timestamps │              │                          │
-│   =True)          │              │ ffmpeg → JPEG at each    │
-│                   │              │   timestamp (base64)     │
-│ → {language,      │              │                          │
-│    full_text,     │              │ OpenCV pixel diff:       │
-│    segments[]}    │              │   sample 5 frames/window │
-└───────────────────┘              │   mean diff > 3% → anim  │
-                                   └──────────────────────────┘
-                                               │
-                                               ▼
-                                   ┌──────────────────────────┐
-                                   │ Audio                    │
-                                   │ (tools/audio.py)         │
-                                   │                          │
-                                   │ librosa.load(16kHz)      │
-                                   │                          │
-                                   │ Per segment:             │
-                                   │   rms → dB → energy lvl │
-                                   │   beat_track → tempo     │
-                                   │   hpss → harmonic ratio  │
-                                   │   spectral_flatness      │
-                                   │   → music bool           │
-                                   └──────────────────────────┘
-                                               │
-    ┌──────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│ Timeline Builder (tools/timeline.py)                │
-│                                                     │
-│  1. Get scene cut timestamps                        │
-│  2. Merge cuts that are < 5s apart                  │
-│     (avoids hundreds of micro-segments)             │
-│  3. For each segment [t_start, t_end]:              │
-│     ├─ transcript text overlapping this window      │
-│     ├─ word count → speech rate (wpm classification)│
-│     ├─ optional keyframe (base64 JPEG)              │
-│     ├─ animation detection (OpenCV pixel diff)      │
-│     └─ audio features (AudioAnalyzer.analyze_       │
-│          segment)                                   │
-└─────────────────────────────────────────────────────┘
-               │
-               ▼
-         JSON response to MCP client
+`get_full_context` is the widest path through the system: it touches every stage. The other three tools are slices of the same graph (transcript-only, frames-only, audio-only).
+
+```mermaid
+flowchart TD
+    URL([youtube_url]) --> DL
+
+    subgraph dl["VideoDownloader · server/utils/downloader.py"]
+        DL["yt_dlp.extract_info() → video_id"]
+        DL --> HIT{"cache complete?<br/>video.mp4 + audio.wav + info.json"}
+        HIT -->|miss| GET["yt-dlp download → video.mp4<br/>ffmpeg → audio.wav (pcm_s16le, 16 kHz, mono)"]
+        HIT -->|hit| LOAD["load info.json"]
+        GET --> OUT0
+        LOAD --> OUT0(["(video_path, audio_path, VideoInfo)"])
+    end
+
+    OUT0 --> TR
+    OUT0 --> FR
+    OUT0 --> AU
+
+    subgraph tr["Transcript · tools/transcript.py"]
+        TR["whisper.load_model(size)<br/>model.transcribe(word_timestamps=True)<br/>→ language · full_text · segments[]"]
+    end
+
+    subgraph fr["Frames · tools/frames.py"]
+        FR["PySceneDetect ContentDetector → cut timestamps<br/>ffmpeg → base64 JPEG per timestamp<br/>OpenCV pixel diff: 5 samples/window, mean diff &gt; 3% → animation"]
+    end
+
+    subgraph au["Audio · tools/audio.py"]
+        AU["librosa.load(16 kHz) once<br/>per segment: rms→dB→energy · beat_track→tempo<br/>hpss harmonic ratio + spectral flatness → music"]
+    end
+
+    TR --> TLB
+    FR --> TLB
+    AU --> TLB
+
+    subgraph tl["Timeline Builder · tools/timeline.py"]
+        TLB["1. scene cuts → boundaries (merge cuts &lt; 5 s apart)<br/>2. per segment: transcript text · word count → speech rate<br/>· optional keyframe · animation · audio features"]
+    end
+
+    TLB --> RESP([JSON response → MCP client])
+
+    classDef io fill:#d1e7dd,stroke:#0f5132,color:#03190f;
+    class URL,RESP io;
 ```
 
 ### Module map
@@ -125,6 +106,75 @@ server/
     ├── frames.py         — PySceneDetect, FFmpeg, OpenCV functions
     ├── audio.py          — AudioAnalyzer class (librosa)
     └── timeline.py       — build_timeline(): merges all signals
+```
+
+### Component model (UML)
+
+The runtime is built from one stateful downloader, one audio analyzer instantiated per call, three stateless tool modules, and the FastMCP entry point that wires them together. `main.py` holds a single shared `VideoDownloader` so the disk cache is reused across every tool call in a session.
+
+```mermaid
+classDiagram
+    class main {
+        <<FastMCP entry>>
+        +get_video_transcript(url, model_size) str
+        +get_video_frames(url, strategy, interval) str
+        +get_audio_features(url, segment_duration) str
+        +get_full_context(url, include_frames, model_size) str
+    }
+    class VideoDownloader {
+        +Path cache_dir
+        +download(url) tuple
+        +clear_cache(video_id) None
+        -_extract_info(url) dict
+    }
+    class VideoInfo {
+        +str id
+        +str title
+        +float duration
+        +str channel
+        +str upload_date
+        +str description
+        +str url
+    }
+    class DownloadError {
+        <<Exception>>
+    }
+    class AudioAnalyzer {
+        +int SR
+        +ndarray y
+        +analyze_segment(t_start, t_end) dict
+        +analyze_full(segment_duration) list
+    }
+    class transcript {
+        <<module>>
+        +get_transcript(audio_path, model_size) dict
+        +get_text_in_range(transcript, t_start, t_end) str
+        +count_words_in_range(transcript, t_start, t_end) int
+    }
+    class frames {
+        <<module>>
+        +get_keyframes(video_path, strategy, interval) list
+        +detect_scene_timestamps(video_path, threshold) list
+        +extract_frame_as_base64(video_path, timestamp, width) str
+        +detect_animation(video_path, t_start, t_end, samples) bool
+        +get_video_duration(video_path) float
+        +format_time(seconds) str
+    }
+    class timeline {
+        <<module>>
+        +build_timeline(video_path, audio_path, transcript, include_frames, min_segment_sec) list
+    }
+
+    main ..> VideoDownloader : shared singleton
+    main ..> transcript : calls
+    main ..> frames : calls
+    main ..> AudioAnalyzer : calls
+    main ..> timeline : calls
+    VideoDownloader ..> VideoInfo : returns
+    VideoDownloader ..> DownloadError : raises
+    timeline ..> transcript : text / word count
+    timeline ..> frames : scenes · keyframe · animation
+    timeline ..> AudioAnalyzer : analyze_segment
 ```
 
 ### Caching strategy
@@ -162,48 +212,36 @@ A segment is classified as music when `harmonic_ratio > 0.25 AND spectral_flatne
 
 ### End-to-end data flow
 
+For `summarize_video` and `ask_about_video`, metadata and analysis are fetched concurrently and merged:
+
+```mermaid
+flowchart TD
+    URL([youtube_url]) --> P{{"Promise.all"}}
+
+    P --> G["GeminiVideoClient · gemini-client.ts<br/>GoogleGenAI SDK<br/>URL passed as fileData.fileUri<br/>(Gemini fetches video natively — no local download)"]
+    P --> M["YouTubeMetadataClient · youtube-metadata.ts<br/>googleapis videos.list(snippet)<br/>→ title · channel · publishedAt · thumbnail<br/>(optional; falls back to GEMINI_API_KEY)"]
+
+    G --> MERGE["merge"]
+    M --> MERGE
+    MERGE --> RESP([Text response → MCP client])
+
+    classDef io fill:#d1e7dd,stroke:#0f5132,color:#03190f;
+    class URL,RESP io;
 ```
-youtube_url
-    │
-    ├──────────────────────────────────────────────────┐
-    │                                                  │
-    ▼                                                  ▼
-┌──────────────────────┐              ┌───────────────────────────┐
-│ GeminiVideoClient    │              │ YouTubeMetadataClient     │
-│ (gemini-client.ts)   │              │ (youtube-metadata.ts)     │
-│                      │              │                           │
-│ GoogleGenAI SDK      │              │ googleapis v3             │
-│ Pass YouTube URL as  │              │ videos.list (snippet)     │
-│ fileData.fileUri     │              │ → title, channel,         │
-│                      │              │   publishedAt, thumbnail  │
-│ Gemini fetches and   │              │                           │
-│ understands video    │              │ Optional: falls back to   │
-│ natively (no local   │              │ GEMINI_API_KEY if no      │
-│   download needed)   │              │ YOUTUBE_API_KEY is set    │
-│                      │              └───────────────────────────┘
-│ Returns: text string │                          │
-└──────────────────────┘                          │
-    │                                             │
-    └──────────────────┬──────────────────────────┘
-                       │  Promise.all([metadata, analysis])
-                       ▼
-              Merged text response → MCP client
 
-── For screenshot tools only ──────────────────────────────────────
+The screenshot tools (`extract_screenshots`, `get_video_timestamps`, `extract_frames`) take a different path — Gemini picks timestamps, then frames are pulled locally:
 
-    GeminiVideoClient.extractTimestamps()
-        │ Returns TimestampResult:
-        │   { timestamps: [{time_seconds, time_formatted, description}]
-        │     video_duration_seconds }
-        ▼
-    ScreenshotExtractor.extractScreenshots()
-        │
-        ├─ checkDependencies() — yt-dlp + ffmpeg in PATH
-        ├─ yt-dlp -f "bestvideo[height<=N]" -g URL  → stream URL
-        └─ ffmpeg -ss <t> -i <stream_url> -vframes 1 → JPEG
-               │
-               ▼
-        base64-encoded JPEG → MCP image content block
+```mermaid
+flowchart TD
+    URL([youtube_url]) --> TS["GeminiVideoClient.extractTimestamps()<br/>→ TimestampResult { timestamps[], video_duration_seconds }"]
+    TS --> SE["ScreenshotExtractor.extractScreenshots()"]
+    SE --> DEP["checkDependencies() — yt-dlp + ffmpeg in PATH"]
+    DEP --> STREAM["yt-dlp -f 'bestvideo[height&lt;=N]' -g URL → stream URL"]
+    STREAM --> FF["ffmpeg -ss t -i stream_url -vframes 1 → JPEG"]
+    FF --> RESP([base64 JPEG → MCP image content block])
+
+    classDef io fill:#d1e7dd,stroke:#0f5132,color:#03190f;
+    class URL,RESP io;
 ```
 
 ### Module map

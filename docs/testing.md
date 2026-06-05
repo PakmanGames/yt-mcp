@@ -30,10 +30,13 @@ Expected: **164 passed** in roughly 4 seconds (audio tests run fast because libr
 |---|---|---|
 | `tests/test_downloader.py` | `server/utils/downloader.py` | 20 |
 | `tests/test_transcript.py` | `server/tools/transcript.py` | 24 |
-| `tests/test_frames.py` | `server/tools/frames.py` | 27 |
+| `tests/test_frames.py` | `server/tools/frames.py` | 32 |
 | `tests/test_audio.py` | `server/tools/audio.py` | 25 |
-| `tests/test_timeline.py` | `server/tools/timeline.py` | 24 |
-| `tests/test_main.py` | `server/main.py` (MCP handlers) | 34 |
+| `tests/test_timeline.py` | `server/tools/timeline.py` | 30 |
+| `tests/test_main.py` | `server/main.py` (MCP handlers) | 33 |
+| **Total** | | **164** |
+
+> `test_main.py` defines 31 test functions, but one is parametrized over three frame strategies (`scene`, `interval`, `both`), so pytest collects 33 cases from it — 164 in total.
 
 All tests are pure unit tests. **No network access, no Whisper model downloads, no real video files** are required to run the suite. Every external tool (yt-dlp, FFmpeg, Whisper, librosa, PySceneDetect, OpenCV) is either mocked or replaced with a synthetic numpy signal.
 
