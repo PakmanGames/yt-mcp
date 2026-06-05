@@ -8,7 +8,7 @@ Tools:
   get_audio_features    — librosa energy / tempo / music detection
   get_full_context      — unified timeline combining all signals
 
-Requires: ffmpeg in PATH, Python 3.10+, pip packages from requirements.txt
+Requires: ffmpeg in PATH, Python 3.10+, dependencies from pyproject.toml (uv sync)
 """
 
 import json

@@ -75,10 +75,12 @@ Then import it in `main.py`:
 from server.tools.my_feature import my_analysis
 ```
 
-### Step 3 — Update `requirements.txt` if you added a dependency
+### Step 3 — Add a dependency if you need one
 
-```
-my-new-library>=1.0.0
+Use `uv add` — it updates `pyproject.toml`, re-resolves `uv.lock`, and installs into `.venv` in one step:
+
+```bash
+uv add "my-new-library>=1.0.0"
 ```
 
 ### Step 4 — Write and run tests
@@ -91,19 +93,19 @@ Add a test file `tests/test_my_feature.py` following the patterns in [docs/testi
 - Happy path → correct JSON structure returned
 
 ```bash
-python -m pytest tests/test_my_feature.py -v
+uv run pytest tests/test_my_feature.py -v
 ```
 
 To run the full suite and confirm nothing is broken:
 
 ```bash
-python -m pytest
+uv run pytest
 ```
 
 For a live smoke test against a real video (no mocks), call your code directly:
 
 ```bash
-python -c "
+uv run python -c "
 from server.utils.downloader import VideoDownloader
 from server.tools.my_feature import my_analysis
 
