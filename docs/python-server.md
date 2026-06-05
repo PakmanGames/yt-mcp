@@ -7,8 +7,8 @@ The Python server (`server/`) is a fully local MCP server. It downloads YouTube 
 ## Quick start
 
 ```bash
-pip install -r requirements.txt
-python server/main.py  # runs in stdio MCP mode
+uv sync                       # create .venv and install locked dependencies
+uv run python server/main.py  # runs in stdio MCP mode
 ```
 
 ---

@@ -102,17 +102,20 @@ python3 --version   # must be 3.10+
 
 ## Installation
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). Install it first if you
+don't have it (`brew install uv`, or see the [install guide](https://docs.astral.sh/uv/getting-started/installation/)).
+
 ```bash
 git clone https://github.com/yourusername/yt-mcp.git
 cd yt-mcp
 
-# Create and activate a virtual environment (recommended)
-python3 -m venv .venv
-source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate         # Windows
-
-pip install -r requirements.txt
+# Create the virtual environment (.venv) and install all dependencies from uv.lock
+uv sync
 ```
+
+`uv sync` creates a `.venv/` in the project directory and installs the exact, locked
+versions of every dependency — including the dev tools (pytest). Add `--no-dev` to
+install runtime dependencies only.
 
 Whisper model weights download automatically on the first transcription call (~142 MB for `base`, ~2.9 GB for `large`).
 
@@ -122,10 +125,9 @@ Whisper model weights download automatically on the first transcription call (~1
 
 MCP clients spawn the server as a subprocess — they do **not** activate your shell or venv automatically. You must point them at the venv's Python interpreter directly using its absolute path.
 
-Find your interpreter path after activating the venv:
+`uv sync` puts the interpreter at `.venv/bin/python`. Get its absolute path:
 ```bash
-source .venv/bin/activate
-which python   # e.g. /Users/you/repos/yt-mcp/.venv/bin/python
+realpath .venv/bin/python   # e.g. /Users/you/repos/yt-mcp/.venv/bin/python
 ```
 
 **Claude Code:**
@@ -323,14 +325,12 @@ https://youtube.com/shorts/VIDEO_ID
 ## Development
 
 ```bash
-# Activate the venv first
-source .venv/bin/activate
-
 # Run the server directly (stdio mode — same as MCP clients use)
-python server/main.py
+# `uv run` executes inside the project venv without needing to activate it
+uv run python server/main.py
 
 # Quick smoke test
-python -c "
+uv run python -c "
 from server.utils.downloader import VideoDownloader
 from server.tools.transcript import get_transcript
 d = VideoDownloader()
@@ -347,14 +347,12 @@ The Python server has a full unit test suite — 164 tests across 6 modules. All
 
 ### Install test dependencies
 
-```bash
-pip install -r requirements-dev.txt
-```
+The dev dependencies (pytest, pytest-mock) are installed by `uv sync` — no separate step needed.
 
 ### Run the full suite
 
 ```bash
-python -m pytest
+uv run pytest
 ```
 
 Expected output: `164 passed in ~4s`
@@ -362,18 +360,18 @@ Expected output: `164 passed in ~4s`
 ### Run tests for a specific module
 
 ```bash
-python -m pytest tests/test_downloader.py   # VideoDownloader + VideoInfo
-python -m pytest tests/test_transcript.py   # Whisper wrapper + range helpers
-python -m pytest tests/test_frames.py       # FFmpeg, PySceneDetect, OpenCV
-python -m pytest tests/test_audio.py        # librosa AudioAnalyzer
-python -m pytest tests/test_timeline.py     # build_timeline + speech rate
-python -m pytest tests/test_main.py         # all 4 MCP tool handlers
+uv run pytest tests/test_downloader.py   # VideoDownloader + VideoInfo
+uv run pytest tests/test_transcript.py   # Whisper wrapper + range helpers
+uv run pytest tests/test_frames.py       # FFmpeg, PySceneDetect, OpenCV
+uv run pytest tests/test_audio.py        # librosa AudioAnalyzer
+uv run pytest tests/test_timeline.py     # build_timeline + speech rate
+uv run pytest tests/test_main.py         # all 4 MCP tool handlers
 ```
 
 ### Run a single test by name
 
 ```bash
-python -m pytest tests/test_timeline.py::TestBuildTimeline::test_rapid_cuts_below_min_merged -v
+uv run pytest tests/test_timeline.py::TestBuildTimeline::test_rapid_cuts_below_min_merged -v
 ```
 
 ### Live smoke test against a real video

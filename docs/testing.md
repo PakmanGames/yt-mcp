@@ -7,17 +7,17 @@ This document covers the yt-mcp Python test suite: how to run it, how it is stru
 ## Quick start
 
 ```bash
-# Install test dependencies (adds pytest and pytest-mock on top of requirements.txt)
-pip install -r requirements-dev.txt
+# Install all dependencies, including the dev tools (pytest, pytest-mock)
+uv sync
 
 # Run the full suite
-python -m pytest
+uv run pytest
 
 # Run with extra verbosity
-python -m pytest -v
+uv run pytest -v
 
 # Run a single file
-python -m pytest tests/test_audio.py -v
+uv run pytest tests/test_audio.py -v
 ```
 
 Expected: **164 passed** in roughly 4 seconds (audio tests run fast because librosa model weights are already cached by your venv).
@@ -310,6 +310,7 @@ def test_returns_expected_dict():
 
 ```ini
 [pytest]
+pythonpath = .
 testpaths = tests
 python_files = test_*.py
 python_classes = Test*
@@ -317,6 +318,6 @@ python_functions = test_*
 addopts = -v --tb=short
 ```
 
-`-v` shows each test name as it runs. `--tb=short` prints compact tracebacks on failure. For full tracebacks: `python -m pytest --tb=long`.
+`pythonpath = .` puts the repo root on `sys.path` so `server` imports resolve under `uv run pytest` (the bare `pytest` console script, unlike `python -m pytest`, does not add the working directory automatically). `-v` shows each test name as it runs. `--tb=short` prints compact tracebacks on failure. For full tracebacks: `uv run pytest --tb=long`.
 
 TypeScript tests (in `tests/*.test.ts`) use a separate runner (`pnpm test`) and are unaffected by `pytest.ini`.
